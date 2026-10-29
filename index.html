@@ -3049,14 +3049,25 @@ async function _uploadStampPaper(input){
     }
     const l=_getActiveLease(true);
     l.stampPaperImg=b64; l._stampShrunk=true;
-    _syncLeaseBack(l);sched();_buildIds();toast('✅ Stamp paper saved ('+Math.round(b64.length*0.75/1024)+' KB)');
+    l.stampMode='file'; _stampModeUI('file');   // attaching a stamp paper = print it first and start the deed after it
+    _syncLeaseBack(l);sched();_buildIds();toast('✅ Stamp paper saved ('+Math.round(b64.length*0.75/1024)+' KB) — deed will print after it');
   }catch(e){toast('❌ Error: '+e.message);console.error(e);}
 }
 
 function _clearStampPaper(){
   const l=_getActiveLease(true);
   l.stampPaperImg='';
+  if(l.stampMode==='file'){ l.stampMode='gap'; }
+  _stampModeUI(_stampMode(l));
   _syncLeaseBack(l);sched();_buildIds();toast('🗑 Stamp paper removed');
+}
+// Keeps the "Stamp Paper Print Mode" box on the Details tab in step when a stamp paper is attached/removed
+// (saving reads the mode from that box, so it must show the new choice).
+function _stampModeUI(mode){
+  const sel=document.getElementById('lStampMode'); if(!sel)return;
+  const fileOpt=sel.querySelector('option[value="file"]'); if(fileOpt)fileOpt.disabled=(mode!=='file'&&!(_getActiveLease(true)||{}).stampPaperImg);
+  sel.value=mode;
+  const gw=document.getElementById('lStampGapWrap'); if(gw)gw.style.display=mode==='gap'?'block':'none';
 }
 
 // ── CHECKLIST ──
