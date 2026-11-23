@@ -2776,6 +2776,12 @@ function _moveClause(idx,dir){
 // **text** prints bold. Each lease remembers which default set it started from (L.pt[tpl].set),
 // so changing the defaults later never changes leases already made.
 // Per-lease changes: L.pt[tpl] = {set, edit:{id:{title,text}}, del:[ids], add:[{id,after,title,text}]}.
+// Lock-in wording (from 23 Nov 2026): notice to terminate applies only after the lock-in. Deeds dated earlier keep the old
+// sentence so an old deed reprints exactly the same.
+const PT_LOCK_OLD="There shall be a lock-in period of **{lock-in} months**. **{notice period}**'s advance notice shall be given by either party for termination of the lease.";
+const PT_LOCK_NEW="There shall be a lock-in period of **{lock-in} months**, during which neither party may terminate this lease, save for breach of its terms. After completion of the lock-in period, either party may terminate the lease by giving **{notice period}** advance notice in writing.";
+const LOCK_NEW_FROM='2026-11-23';
+function _lockNew(L){ return !L||!L.agrDate||String(L.agrDate)>=LOCK_NEW_FROM; }
 const PT_DEFS={
 lease:[
  {id:'lease_1',text:"That the LESSOR has agreed to lease out the above described premises to the {LESSEE} at the rent of **Rs. {rent amount}/- per month (Rupees {rent in words})**{rent note}, {charges}, for a period of **{tenure} months** commencing from **{start date}** to **{end date}**.{meter note}"},
@@ -2873,7 +2879,8 @@ function _ptResolve(L,tpl,includeRemoved){
     const removed=del.has(b.id);
     if(!removed||includeRemoved){
       const e=ed[b.id];
-      out.push({id:b.id,title:e?(e.title||''):(b.title||''),text:e?e.text:b.text,origTitle:b.title||'',origText:b.text,edited:!!e,removed,added:false});
+      const bt=(b.text===PT_LOCK_OLD&&_lockNew(L))?PT_LOCK_NEW:b.text;   // standard lock-in sentence → new wording for new deeds
+      out.push({id:b.id,title:e?(e.title||''):(b.title||''),text:e?e.text:bt,origTitle:b.title||'',origText:bt,edited:!!e,removed,added:false});
     }
     pushAdds(b.id);
   });
@@ -3570,7 +3577,7 @@ ${_ptOn(L,'lease')?_ptListHTML(L,'lease',_ctx):`<ol>
 <li>13. The LESSEE${isJoint?'S':''} shall be liable for any breakage, damages or repairs to sanitary, electrical, air-conditioning, plumbing and other fittings. At occupation, the LESSEE${isJoint?'S':''} shall confirm all fittings are in working condition and restore them on vacating (normal wear and tear excepted).</li>
 <li>14. <span class="deed-cl">Inspection:</span> The LESSEE${isJoint?'S':''} shall permit the LESSOR or his representatives to inspect the premises at reasonable hours.</li>
 <li>15. On expiry of the lease period, the LESSEE${isJoint?'S':''} shall vacate and hand over vacant possession of the premises to the LESSOR.</li>
-<li>16. There shall be a lock-in period of <strong>${L.lockIn||'6'} months</strong>. <strong>${L.noticePeriod||'One month'}</strong>'s advance notice shall be given by either party for termination of the lease.</li>
+<li>16. ${_lockNew(L)?`There shall be a lock-in period of <strong>${L.lockIn||'6'} months</strong>, during which neither party may terminate this lease, save for breach of its terms. After completion of the lock-in period, either party may terminate the lease by giving <strong>${L.noticePeriod||'One month'}</strong> advance notice in writing.`:`There shall be a lock-in period of <strong>${L.lockIn||'6'} months</strong>. <strong>${L.noticePeriod||'One month'}</strong>'s advance notice shall be given by either party for termination of the lease.`}</li>
 <li>17. The LESSOR shall have the right to terminate the lease in case of breach of any terms and conditions herein.</li>
 <li>18. On vacating, the LESSEE${isJoint?'S':''} shall be entitled to remove all equipment brought in, provided the premises is restored to original condition.</li>
 <li>19. The LESSEE${isJoint?'S':''} has paid/shall pay a sum of <strong>Rs. ${Number(L.secAmt||0).toLocaleString('en-IN')}/- (Rupees ${secWords})</strong> as interest free refundable security deposit, refundable on vacation after deducting any outstanding dues or damages beyond normal wear and tear.</li>
