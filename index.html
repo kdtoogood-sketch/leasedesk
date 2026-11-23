@@ -3379,7 +3379,23 @@ function _keepHeadWithFirst(h){
   if(end<0)return h;
   return h.slice(0,m.index)+'<div class="deed-keep" style="break-inside:avoid;page-break-inside:avoid;">'+m[1]+'\n<ol>'+h.slice(from,end)+'</ol></div>\n<ol>'+h.slice(end);
 }
-function _renderDeedHTML(L){ return _keepHeadWithFirst(_renderDeedHTML0(L)); }
+// …and the witnesses / signatures never sit alone on the last page: the last clause (plus anything between it and the
+// witnesses, e.g. Schedule I of a licence) is printed in one unbreakable block with them.
+function _keepLastWithWitness(h){
+  const wi=h.indexOf('<div class="deed-witness-section"'); if(wi<0)return h;
+  let dr=/<(\/?)div\b[^>]*>/gi, depth=0, we=-1, t; dr.lastIndex=wi;          // end of the witness block
+  while((t=dr.exec(h))){ if(!t[1])depth++; else { depth--; if(depth===0){ we=t.index+t[0].length; break; } } }
+  if(we<0)return h;
+  const oc=h.lastIndexOf('</ol>',wi); if(oc<0||/<\/?(ol|li)\b/i.test(h.slice(oc+5,wi)))return h;
+  // top-level <li> starts of the list that closes at oc
+  const re=/<(\/?)(ol|li)\b[^>]*>/gi; let ol=0, li=0, starts=[]; re.lastIndex=0;
+  while((t=re.exec(h))&&t.index<oc){ const close=!!t[1], tag=t[2].toLowerCase();
+    if(tag==='ol'){ if(!close){ ol++; if(ol===1)starts=[]; } else ol--; }
+    else { if(!close){ if(ol===1&&li===0)starts.push(t.index); li++; } else li=Math.max(0,li-1); } }
+  const ls=starts[starts.length-1]; if(ls==null||starts.length<2)return h;
+  return h.slice(0,ls)+'</ol>\n<div class="deed-keep" style="break-inside:avoid;page-break-inside:avoid;"><ol>'+h.slice(ls,oc)+'</ol>'+h.slice(oc+5,we)+'</div>'+h.slice(we);
+}
+function _renderDeedHTML(L){ return _keepHeadWithFirst(_keepLastWithWitness(_renderDeedHTML0(L))); }
 function _renderDeedHTML0(L){
   const landlord=(S.parties||[]).find(p=>p.id===L.landlordId)||{};
   // Support multiple tenants
@@ -3820,8 +3836,12 @@ function _deedBalancer(doc){
   var gapLimit=Math.max(0.12,minGap+0.03);
   function ok(m){ return m.last>=0.2&&m.gaps<=gapLimit; }
   var pick=null;
-  if(ok(base)&&base.last>=0.25)pick=base;
-  if(!pick)for(var a=0;a<tight.length&&!pick;a++)if(tight[a].pages<base.pages&&ok(tight[a]))pick=tight[a];
+  // saving a whole page is worth a slightly bigger blank at a page foot (e.g. where a heading moved down with clause 1)
+  function okSave(m){ return m.last>=0.2&&m.gaps<=Math.max(gapLimit,0.2); }
+  var saver=null; for(var a=0;a<tight.length&&!saver;a++)if(tight[a].pages<base.pages&&okSave(tight[a]))saver=tight[a];
+  // a last page with little more than the final clause and the signatures (<40%) is saved when a slight tighten allows
+  if(ok(base)&&base.last>=0.25&&!(base.last<0.4&&saver))pick=base;
+  if(!pick&&saver)pick=saver;
   if(!pick)for(var b=0;b<spread.length&&!pick;b++)if(spread[b].pages<=base.pages&&ok(spread[b])&&(spread[b].last>=0.25||spread[b].pages<base.pages))pick=spread[b];
   if(!pick&&ok(base))pick=base;
   if(!pick){ // nothing perfect — closest to the goal without adding a page, preferring normal spacing on ties
