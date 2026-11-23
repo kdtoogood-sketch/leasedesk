@@ -2120,6 +2120,14 @@ function closeLease(){
 }
 
 // ── LEASE FORM ──
+// escalation can be a % or a fixed rupee amount added to the monthly rent
+function _escIsAmt(L){ return !!L&&L.escalationType==='amt'; }
+function _escTxt(L,dflt){                                     // "10%"  ·  "Rs. 5,000/- (Rupees Five Thousand Only) per month"
+  if(_escIsAmt(L)){ const n=Number(L.escalation); return n>0?'Rs. '+n.toLocaleString('en-IN')+'/- (Rupees '+toWords(n)+') per month':'Rs. _______/- per month'; }
+  return (L&&L.escalation||dflt)+'%';
+}
+function _escShort(L){ return _escIsAmt(L)?'₹'+Number(L.escalation||0).toLocaleString('en-IN'):(L.escalation||'—')+'%'; }
+function _escTypeChg(sel){ const i=document.getElementById('lEsc'); if(!i)return; i.value=''; i.placeholder=sel.value==='amt'?'e.g. 5000':'e.g. 10'; i.focus(); }
 function _lv(id){const el=document.getElementById(id);return el?el.value:'';}
 
 function _buildLeaseForm(L){
@@ -2285,7 +2293,7 @@ function _buildLeaseForm(L){
     </div>
   </div>
   <div class="frow">
-    <div><label class="flabel">Escalation (%)</label><input class="finput" id="lEsc" type="number" value="${L.escalation||'10'}"/></div>
+    <div><label class="flabel">Escalation</label><div style="display:flex;gap:6px;"><select class="finput" id="lEscType" title="% of rent, or a fixed ₹ amount added to the monthly rent" style="flex:0 0 64px;width:64px;padding-left:10px;padding-right:4px;" onchange="_escTypeChg(this)"><option value="pct" ${_escIsAmt(L)?'':'selected'}>%</option><option value="amt" ${_escIsAmt(L)?'selected':''}>₹</option></select><input class="finput" id="lEsc" type="number" style="flex:1;min-width:0;" value="${_escIsAmt(L)?(L.escalation||''):(L.escalation||'10')}" placeholder="${_escIsAmt(L)?'e.g. 5000':'e.g. 10'}"/></div></div>
     <div><label class="flabel">Escalation After (months)</label><input class="finput" id="lEscAfter" type="number" value="${L.escalationAfter||'12'}"/></div>
   </div>
   <div class="frow">
@@ -2554,7 +2562,7 @@ function _collectLease(){
     secAmt,secWords:toWords(secAmt),
     rentBracket:document.getElementById('lRentBracketEnabled')?.checked||false,
     rentBracketText:_lv('lRentBracketText'),
-    escalation:_lv('lEsc'),escalationAfter:_lv('lEscAfter'),
+    escalation:_lv('lEsc'),escalationType:_lv('lEscType')==='amt'?'amt':'pct',escalationAfter:_lv('lEscAfter'),
     lockIn:_lv('lLockIn'),noticePeriod:_lv('lNotice'),
     paymentDueDate:_lv('lPayDue'),overstayPenalty:_lv('lOverstay'),
     purpose:_lv('lPurpose'),stampSplit:_lv('lStamp'),
@@ -2626,15 +2634,15 @@ function deleteLease(id){
 // ── RENEWAL ──
 function renewLeaseFlow(id){
   const old=(S.leases||[]).find(x=>x.id===id);if(!old)return;
-  const origEsc=parseFloat(old.escalation)||10;
+  const isAmt=_escIsAmt(old), origEsc=parseFloat(old.escalation)||(isAmt?0:10);
   const oldRent=parseFloat(old.rentAmt)||0;
-  const calcRent=Math.round(oldRent*(1+origEsc/100));
+  const calcRent=isAmt?Math.round(oldRent+origEsc):Math.round(oldRent*(1+origEsc/100));
   openM('🔄 Confirm Renewal Escalation',`
     <div style="background:var(--blue-dim);border:1.5px solid var(--blue);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--blue);">
-      <strong>Agreed escalation: ${origEsc}%</strong><br/>Previous rent: ${fm(oldRent)}<br/>Calculated new rent: ${fm(calcRent)}
+      <strong>Agreed escalation: ${isAmt?'₹'+origEsc.toLocaleString('en-IN')+' per month':origEsc+'%'}</strong><br/>Previous rent: ${fm(oldRent)}<br/>Calculated new rent: ${fm(calcRent)}
     </div>
-    <div class="frow1"><label class="flabel">Settled escalation % (edit if needed)</label>
-      <input class="finput" id="renewPct" type="number" value="${origEsc}" step="0.5" oninput="const nr=Math.round(${oldRent}*(1+parseFloat(this.value||0)/100));document.getElementById('renewPreview').textContent='₹'+nr.toLocaleString('en-IN');"/>
+    <div class="frow1"><label class="flabel">Settled escalation ${isAmt?'₹ per month':'%'} (edit if needed)</label>
+      <input class="finput" id="renewPct" data-amt="${isAmt?1:''}" type="number" value="${origEsc}" step="${isAmt?'500':'0.5'}" oninput="const v=parseFloat(this.value||0);const nr=Math.round(this.dataset.amt?${oldRent}+v:${oldRent}*(1+v/100));document.getElementById('renewPreview').textContent='₹'+nr.toLocaleString('en-IN');"/>
     </div>
     <div style="background:var(--orange-dim);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
       <span style="font-size:13px;font-weight:600;color:var(--orange);">New rent will be:</span>
@@ -2645,18 +2653,18 @@ function renewLeaseFlow(id){
 }
 
 function applyRenewal(id){
-  const entPct=parseFloat(document.getElementById('renewPct').value||0);
+  const ri=document.getElementById('renewPct'), entPct=parseFloat(ri.value||0), isAmt=!!ri.dataset.amt;
   closeM();
   const old=(S.leases||[]).find(x=>x.id===id);if(!old)return;
   old.status='renewed';
-  const newRent=Math.round(parseFloat(old.rentAmt||0)*(1+entPct/100));
+  const newRent=isAmt?Math.round(parseFloat(old.rentAmt||0)+entPct):Math.round(parseFloat(old.rentAmt||0)*(1+entPct/100));
   let newStart=old.leaseEnd;
   if(newStart){const d=new Date(newStart+'T00:00:00');d.setDate(d.getDate()+1);newStart=d.toISOString().slice(0,10);}
   let newEnd='';const ten=parseInt(old.tenure)||11;
   if(newStart){const d=new Date(newStart+'T00:00:00');d.setMonth(d.getMonth()+ten);d.setDate(d.getDate()-1);newEnd=d.toISOString().slice(0,10);}
   const newL={...old,id:uid(),status:'active',renewedFrom:id,renewalCount:(old.renewalCount||0)+1,
     startDate:newStart,leaseEnd:newEnd,rentAmt:String(newRent),rentWords:toWords(newRent),
-    settledEscalation:entPct,checklist:JSON.parse(JSON.stringify(DEFAULT_CHECKLIST)),signed:{},
+    settledEscalation:entPct,settledEscalationType:isAmt?'amt':'pct',checklist:JSON.parse(JSON.stringify(DEFAULT_CHECKLIST)),signed:{},
     createdAt:today(),createdBy:user};
   if(!S.leases)S.leases=[];
   S.leases.push(newL);
@@ -2881,7 +2889,7 @@ function _ptVals(L,tpl,c){
   const v={
     'rent amount':amt(L.rentAmt),'rent in words':c.rentWords,'deposit amount':amt(L.secAmt),'deposit in words':c.secWords,
     'tenure':String(c.tenure),'start date':D(L.startDate),'end date':D(L.leaseEnd),'handover date':fmtDeedDate(L.handoverDate||L.startDate),
-    'escalation %':L.escalation||(ll?'7.5':'10'),'escalation after':L.escalationAfter||'12',
+    'escalation %':_escIsAmt(L)?_escTxt(L):(L.escalation||(ll?'7.5':'10')),'_escAmt':_escIsAmt(L),'escalation after':L.escalationAfter||'12',
     'notice period':L.noticePeriod||(ll?'one month':'One month'),'due day':L.paymentDueDate||(ll?'5':'7'),
     'lock-in':L.lockIn||'6','purpose':L.purpose||'Residential','lessee names':c.lesseeAllNames||'',
     'stamp split':L.stampSplit||'70:30','overstay amount':amt(L.overstayPenalty||3000),'overstay in words':toWords(L.overstayPenalty||3000),
@@ -2908,6 +2916,7 @@ function _ptVals(L,tpl,c){
 // Values worked out by the renderer are already HTML; text the user typed is escaped.
 const PT_HTML_TAGS=new Set(['rent note','charges','meter note','maintenance terms','electricity terms','fixtures list','lieu clause','handover note']);
 function _ptFmt(text,vals){
+  if(vals&&vals._escAmt)text=String(text||'').replace(/\{\s*escalation %\s*\}\s*%/g,'{escalation %}');   // "{escalation %}%" → the rupee wording
   return String(text||'').split('**').map((seg,i)=>{
     const out=seg.split(/(\{[^{}]+\})/).map(part=>{
       const m=part.match(/^\{([^{}]+)\}$/);
@@ -3520,7 +3529,7 @@ ${_ptOn(L,'ll')?_ptListHTML(L,'ll',_ctx):`<ol>
 <li>9) The Licensor or his/her representative will have the right to inspect the licensed premises at reasonable hours.</li>
 <li><span class="deed-cl">10) Cancellation:</span> Either party may terminate this agreement by giving <strong>${L.noticePeriod||'one month'}</strong> written notice. The Licensor may revoke if the Licensee${isJoint?'s':''} default in payment or breach any term hereof.</li>
 <li><span class="deed-cl">11) Possession:</span> On expiration or cancellation, the Licensee${isJoint?'s':''} shall vacate the premises immediately. In case of failure to vacate, the Licensor shall be entitled to recover damages at double the daily compensation rate.</li>
-<li><span class="deed-cl">12) Miscellaneous:</span> Society penalties shall be borne by the Licensee${isJoint?'s':''}. The license fee shall increase by <strong>${L.escalation||'7.5'}%</strong> after <strong>${L.escalationAfter||'12'} months</strong>.
+<li><span class="deed-cl">12) Miscellaneous:</span> Society penalties shall be borne by the Licensee${isJoint?'s':''}. The license fee shall increase by <strong>${_escTxt(L,'7.5')}</strong> after <strong>${L.escalationAfter||'12'} months</strong>.
 ${L.customClauses&&L.customClauses.length?'<br/><br/>'+L.customClauses.map((c,i)=>`<strong>${13+i}) ${c.title||'Additional Clause'}:</strong> ${c.text}`).join('<br/><br/>'):''}</li>
 </ol>`}
 <p style="text-align:center;margin-top:20px;"><strong>SCHEDULE I — LICENSED PREMISES</strong></p>
@@ -3547,7 +3556,7 @@ ${_inventoryHTML(L)}${_idPagesHTML(L,t)}`);
 <p style="text-align:center;font-weight:700;text-decoration:underline;margin-top:28px;margin-bottom:12px;">NOW THIS LEASE AGREEMENT WITNESSETH AS FOLLOWS:</p>
 ${_ptOn(L,'lease')?_ptListHTML(L,'lease',_ctx):`<ol>
 <li>1. That the LESSOR has agreed to lease out the above described premises to the LESSEE${isJoint?'S':''} at the rent of <strong>Rs. ${Number(L.rentAmt||0).toLocaleString('en-IN')}/- per month (Rupees ${rentWords})</strong>${rentBracketStr}, ${chargesExcludedStr}, for a period of <strong>${tenure} months</strong> commencing from <strong>${fmtDeedDate(L.startDate)}</strong> to <strong>${fmtDeedDate(L.leaseEnd)}</strong>.${meterNote}</li>
-<li>2. That it has been agreed between both the parties that there will be escalation of rent of <strong>${L.escalation||'10'}%</strong> every <strong>${L.escalationAfter||'12'} months</strong>.</li>
+<li>2. That it has been agreed between both the parties that there will be escalation of rent of <strong>${_escTxt(L,'10')}</strong> every <strong>${L.escalationAfter||'12'} months</strong>.</li>
 <li>3. That the Said Property has been handed over on <strong>${fmtDeedDate(L.handoverDate||L.startDate)}</strong> in good tenantable condition by the LESSOR to the LESSEE${isJoint?'S':''}.</li>
 <li>4. That the LESSOR and LESSEE${isJoint?'S':''} can renew the lease for a further period only upon mutual consent. <strong>${L.noticePeriod||'One month'}</strong>'s advance notice shall be given in writing by either party for renewal of the lease.</li>
 <li>5. That the LESSEE${isJoint?'S':''} shall pay monthly rent in advance on or before <strong>${L.paymentDueDate||'7'}th</strong> of every calendar month by cheque/RTGS. If rent is not paid by the 10th, interest @ <strong>15% p.a.</strong> will be charged. Delinquency beyond 30 days gives the LESSOR the right to terminate this agreement.</li>
@@ -3673,7 +3682,7 @@ function _renderTenancyDeed(L,landlord,tenantList,prop,propDesc,tenure,rentWords
 <p>AND WHEREAS ${TN} ${multiT?'have':'has'} approached ${OW} and requested to let out the Said Property, along with the fixtures listed in Clause 2, for ${(L.purpose||'residential').toLowerCase()} use, and ${OW} ${multiO?'have':'has'} agreed on the terms and conditions set out below.</p>
 <p><strong>NOW THIS DEED WITNESSETH AND IT IS HEREBY AGREED BY AND BETWEEN THE PARTIES AS FOLLOWS:</strong></p>
 ${_ptOn(L,'tenancy')?_ptListHTML(L,'tenancy',_tctx):`<ol>
-${cl(1,'Grant and Term',`${OW} hereby let${multiO?'':'s'} out the Said Property, together with the fixtures listed in Clause 2, strictly for ${(L.purpose||'residential').toLowerCase()} use by ${tNames} along with ${his} family members, and friends, relatives and guests visiting temporarily, for a period of <strong>${tenure} months commencing from ${D(L.startDate)} and ending on ${D(L.leaseEnd)}</strong>. If the tenancy is further extended, the rent shall be escalated by <strong>${L.escalation||'10'}%</strong>, as mutually agreed. This tenancy is a temporary arrangement and shall stand ipso facto determined on the expiry of the said term.`)}
+${cl(1,'Grant and Term',`${OW} hereby let${multiO?'':'s'} out the Said Property, together with the fixtures listed in Clause 2, strictly for ${(L.purpose||'residential').toLowerCase()} use by ${tNames} along with ${his} family members, and friends, relatives and guests visiting temporarily, for a period of <strong>${tenure} months commencing from ${D(L.startDate)} and ending on ${D(L.leaseEnd)}</strong>. If the tenancy is further extended, the rent shall be escalated by <strong>${_escTxt(L,'10')}</strong>, as mutually agreed. This tenancy is a temporary arrangement and shall stand ipso facto determined on the expiry of the said term.`)}
 ${cl(2,'Interior Fixtures',`The following fixtures are let out along with the Said Property:${fixtures}`)}
 ${cl(3,'Rent, Maintenance and Payment',`${TN} shall pay to ${OW} a monthly rent of <strong>Rs. ${amt(L.rentAmt)}/- (Rupees ${rentWords})</strong>${rentBracketStr}, ${maint}, with effect from the date of handing over possession${L.handoverDate?' ('+D(L.handoverDate)+')':''} until the date of handing back vacant possession. The maintenance charges are variable and subject to revision from time to time, as agreed amongst the owners or occupiers of the building. The rent and maintenance shall be paid <strong>in advance by the ${L.paymentDueDate||'7'}th day of every calendar month</strong>. ${TN} may avail a grace period of a maximum of <strong>${grace} days</strong> for a valid reason; any delay beyond the grace period shall attract interest <strong>@ ${intr}% per annum</strong> on the amount due, if so allowed by ${OW}.`)}
 ${cl(4,'Lock-in and Notice by Tenant',`There shall be a lock-in period of <strong>${lockIn} months</strong> from the commencement of this tenancy. If ${TN} ${multiT?'vacate':'vacates'} before the expiry of the lock-in period, ${he} shall be liable to pay the rent and maintenance charges for a minimum period of ${lockIn} months, inclusive of the amount already paid, unless an eviction notice has been served by ${OW} before the expiry of the lock-in period. ${TN} shall give advance notice of <strong>${tNotice}</strong> to vacate the Said Property${lieu?`, or pay ${lieu} in lieu of such notice`:''}.`)}
@@ -4173,7 +4182,7 @@ function _doShareWA(l){
   const prop=(S.properties||[]).find(p=>p.id===l.propertyId)||{};
   const t=l.template==='ll';
   const allTenants=l.tenantNames&&l.tenantNames.length?l.tenantNames.join(', '):(l.tenantName||'—');
-  const msg=`*${t?'Leave & License':l.template==='tenancy'?'Tenancy Deed':'Lease Deed'} Summary — KD Constructions*\n\n${t?'Licensor':'Lessor'}: ${landlord.name||l.landlordName||'—'}\n${t?'Licensee(s)':'Lessee(s)'}: ${allTenants}\nProperty: ${prop.name||l.propertyName||'—'}\nPeriod: ${fd(l.startDate)} to ${fd(l.leaseEnd)} (${l.tenure} months)\nMonthly ${t?'License Fee':'Rent'}: Rs. ${Number(l.rentAmt||0).toLocaleString('en-IN')}\nSecurity Deposit: Rs. ${Number(l.secAmt||0).toLocaleString('en-IN')}\nEscalation: ${l.escalation||'—'}% after ${l.escalationAfter||'12'} months\nLock-in: ${l.lockIn||'—'} months · Notice: ${l.noticePeriod||'—'}\nStatus: ${l.status==='active'?'Active':'Renewed/Expired'}\n\n_Generated via LeaseDesk — KD Constructions_`;
+  const msg=`*${t?'Leave & License':l.template==='tenancy'?'Tenancy Deed':'Lease Deed'} Summary — KD Constructions*\n\n${t?'Licensor':'Lessor'}: ${landlord.name||l.landlordName||'—'}\n${t?'Licensee(s)':'Lessee(s)'}: ${allTenants}\nProperty: ${prop.name||l.propertyName||'—'}\nPeriod: ${fd(l.startDate)} to ${fd(l.leaseEnd)} (${l.tenure} months)\nMonthly ${t?'License Fee':'Rent'}: Rs. ${Number(l.rentAmt||0).toLocaleString('en-IN')}\nSecurity Deposit: Rs. ${Number(l.secAmt||0).toLocaleString('en-IN')}\nEscalation: ${_escShort(l)} after ${l.escalationAfter||'12'} months\nLock-in: ${l.lockIn||'—'} months · Notice: ${l.noticePeriod||'—'}\nStatus: ${l.status==='active'?'Active':'Renewed/Expired'}\n\n_Generated via LeaseDesk — KD Constructions_`;
   window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
 }
 
