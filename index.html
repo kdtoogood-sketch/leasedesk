@@ -3370,7 +3370,17 @@ function _refreshPreview(again){
 }
 
 // ── DEED HTML ──
-function _renderDeedHTML(L){
+// "NOW THIS … WITNESSETH / AGREED AS FOLLOWS:" must never be left alone at the foot of a page: it is printed in one
+// unbreakable block with clause 1 (if both don't fit at the bottom, both move to the next page). Looks the same on screen.
+function _keepHeadWithFirst(h){
+  const m=/(<p[^>]*>(?:<strong>)?NOW [^<]*AS FOLLOWS:(?:<\/strong>)?<\/p>)\s*<ol>/.exec(h); if(!m)return h;
+  const from=m.index+m[0].length, re=/<(\/?)li\b[^>]*>/gi; re.lastIndex=from; let depth=0, end=-1, t;
+  while((t=re.exec(h))){ if(!t[1])depth++; else { depth--; if(depth===0){ end=t.index+t[0].length; break; } } }
+  if(end<0)return h;
+  return h.slice(0,m.index)+'<div class="deed-keep" style="break-inside:avoid;page-break-inside:avoid;">'+m[1]+'\n<ol>'+h.slice(from,end)+'</ol></div>\n<ol>'+h.slice(end);
+}
+function _renderDeedHTML(L){ return _keepHeadWithFirst(_renderDeedHTML0(L)); }
+function _renderDeedHTML0(L){
   const landlord=(S.parties||[]).find(p=>p.id===L.landlordId)||{};
   // Support multiple tenants
   const tenantIdList=L.tenantIds&&L.tenantIds.length?L.tenantIds:[L.tenantId].filter(Boolean);
