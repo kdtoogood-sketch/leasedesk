@@ -1064,7 +1064,7 @@ function idParse(text,kind,words,lconf,addrText){
     const toks=T.toUpperCase().replace(/[^A-Z0-9\s]/g,' ').split(/\s+/).filter(t=>t.length>=10&&t.length<=11&&/\d/.test(t));
     for(const t of toks){ if(t.length===10&&okP(fix(t))){ out.pan=fix(t); break; }
       if(t.length===11){ const cands=[]; for(let i=0;i<11;i++){ const c=fix(t.slice(0,i)+t.slice(i+1)); if(okP(c)&&!cands.some(x=>x.c===c))cands.push({c,i}); }
-        if(cands.length){ out._panCands=cands; out.pan=(cands.find(x=>x.i>=5)||cands[0]).c; break; } } } }
+        if(cands.length){ out._panCands=cands; out.pan=(cands.find(x=>x.i>=5)||cands[0]).c; out.panFix=true; break; } } } }
   // ── Aadhaar number: 4-4-4 digits (not the 16-digit VID)
   { // every real Aadhaar number carries a Verhoeff check digit: accept loose spacing / O-for-0, but only a number that checks out
     const cands={}; (T.replace(/[Oo](?=[\d\s]*\d)/g,'0').match(/(?<![\d])\d[\d ]{10,16}\d(?![\d])/g)||[]).forEach(raw=>{
@@ -1082,6 +1082,14 @@ function idParse(text,kind,words,lconf,addrText){
     if(!out.name){
       const caps=L.filter(goodName).map(_idoClean).filter(x=>/^[A-Z][A-Z .']{2,60}$/.test(x));
       if(caps[0])out.name=_idoTitle(caps[0]); if(caps[1]&&!out.father)out.father=_idoTitle(caps[1]);
+    }
+    // old card read with stray marks after the words ("RUCHI AGARWAL | eas"): the capital-letter lines between the
+    // header and the date of birth, trimmed to the capital words; needs both lines so the name never lands in father
+    if(!out.name){
+      const hi=L.findIndex(l=>/(income|department|govt)/i.test(l)), dI=L.findIndex((l,i)=>i>hi&&/\d{2}\s*[\/\-]\s*\d{2}\s*[\/\-]\s*\d{4}/.test(l));
+      if(hi>=0&&dI>hi+1){ const nm=[]; for(let i=hi+1;i<dI;i++){ if(cf(L[i])<60)continue; const m=_idoClean(L[i]).match(/^[A-Z][A-Z.']*(?:\s+[A-Z][A-Z.']*)*/); if(!m)continue;
+          const s=m[0].replace(/(\s+[A-Z])+$/,'').trim(); if(_idoIsName(s)&&s.split(/\s+/).some(w=>w.replace(/[^A-Z]/g,'').length>=4))nm.push(s); }
+        if(nm.length>=2){ out.name=_idoTitle(nm[0]); if(!out.father)out.father=_idoTitle(nm[1]); } }
     }
   }
   if(kind==='aadhaar_f'||kind==='aadhaar_b'||(!kind&&out.aadhaar)){
@@ -1118,6 +1126,15 @@ function idParse(text,kind,words,lconf,addrText){
   return out;
 }
 // read one ID picture and fill empty boxes of the open party form
+// coloured cards (blue PAN background, hologram): the red channel keeps black print dark and turns the blue pale
+function _idoRed(src){
+  return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const c=document.createElement('canvas'); c.width=im.width; c.height=im.height; const x=c.getContext('2d'); x.drawImage(im,0,0);
+    const g=x.getImageData(0,0,c.width,c.height), d=g.data; for(let i=0;i<d.length;i+=4){ d[i+1]=d[i+2]=d[i]; } x.putImageData(g,0,0); res(c.toDataURL('image/png')); };
+    im.onerror=()=>rej(new Error('bad image')); im.src=src; });
+}
+async function _idoRead(w,img,kind){ const x=await w.recognize(img,{},{text:true,blocks:true}); const wd=_idoWords(x&&x.data); const at=kind!=='pan'?await _idoAddrPass(w,img,wd):''; return idParse(x&&x.data&&x.data.text||'',kind,wd,_idoLineConf(x&&x.data),at); }
+// two reads put together: name + father always come from the same read
+function _idoMerge(a,b){ const r=Object.assign({},b,a); const pair=[a,b].find(z=>z.name&&z.father)||[a,b].find(z=>z.name); if(pair){ r.name=pair.name; r.father=pair.father; r.relation=pair.relation; r.fatherLate=pair.fatherLate; } else { delete r.name; } if(b.pan&&a.pan&&a.pan!==b.pan&&a.panFix&&!b.panFix)r.pan=b.pan; return r; }
 async function idFillFromPic(srcs,kind){
   srcs=[].concat(srcs).filter(Boolean);
   const $i=id=>document.getElementById(id); if(!$i('pName'))return;            // form not open
@@ -1125,7 +1142,10 @@ async function idFillFromPic(srcs,kind){
   const nm={aadhaar_f:'Aadhaar (front)',aadhaar_b:'Aadhaar (back)',pan:'PAN card'}[kind]||'card';
   say('🔍 Reading the '+nm+'…'+(window.Tesseract?'':' (first time takes a little longer)'),'var(--muted)');
   let r;
-  try{ let img=null; for(let s0 of srcs){ try{ if(typeof File!=='undefined'&&s0 instanceof File)s0=await _idoPdfSrc(s0); img=await _idoPrep(s0); break; }catch(e){} } if(!img)throw new Error('no picture'); const w=await _idoWorker(); const x=await w.recognize(img,{},{text:true,blocks:true}); const wd=_idoWords(x&&x.data); const at=kind!=='pan'?await _idoAddrPass(w,img,wd):''; r=idParse(x&&x.data&&x.data.text||'',kind,wd,_idoLineConf(x&&x.data),at);  }
+  try{ let img=null; for(let s0 of srcs){ try{ if(typeof File!=='undefined'&&s0 instanceof File)s0=await _idoPdfSrc(s0); img=await _idoPrep(s0); break; }catch(e){} } if(!img)throw new Error('no picture'); const w=await _idoWorker(); r=await _idoRead(w,img,kind);
+    // something missing? read once more from the red channel (helps the blue PAN card and faded prints)
+    const need=kind==='pan'?(!r.pan||!r.name||!r.father):kind==='aadhaar_f'?(!r.aadhaar||!r.name):(!r.address||!r.father);
+    if(need){ try{ const r2=await _idoRead(w,await _idoRed(img),kind); r=_idoMerge(r,r2); }catch(e){} }  }
   catch(e){ say('Could not read the '+nm+' here — fill the boxes yourself.','var(--muted)'); return; }
   const got=[], mark=el=>{ el.classList.add('ocr-fill'); el.addEventListener('input',()=>el.classList.remove('ocr-fill'),{once:true}); };
   const fill=(id,v,label)=>{ const el=$i(id); if(!el||!v)return; if(String(el.value||'').trim())return; el.value=v; mark(el); got.push(label); };
