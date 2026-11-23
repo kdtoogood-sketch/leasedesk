@@ -994,6 +994,10 @@ function _withPrefix(selId,inputId){
 }
 
 
+
+
+
+
 // ══ 🔍 READ AADHAAR / PAN PHOTOS → fill the party form ══
 // Runs on the phone (tesseract.js, downloaded once, then kept by the browser). The card picture is never sent
 // anywhere to be read. It only fills EMPTY boxes and highlights them; nothing is saved until you press Save.
@@ -1008,17 +1012,42 @@ function _idoLib(){
 async function _idoWorker(){ if(_idoW)return _idoW; await _idoLib(); _idoW=await Tesseract.createWorker('eng',1,{logger:()=>{}}); return _idoW; }
 // enlarge small photos, cap big ones, plain white behind
 function _idoPrep(src){
-  return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const L=Math.max(im.width,im.height), k=L<1400?1400/L:(L>2600?2600/L:1);
-    const c=document.createElement('canvas'); c.width=Math.round(im.width*k); c.height=Math.round(im.height*k); const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); x.drawImage(im,0,0,c.width,c.height); res(c.toDataURL('image/png')); };
+  return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{
+    // find where the card is: skip plain white margins (a card scanned in the middle of an A4 page)
+    let sx=0,sy=0,sw=im.width,sh=im.height;
+    try{ const q=Math.min(1,400/Math.max(im.width,im.height)), t=document.createElement('canvas'); t.width=Math.max(1,Math.round(im.width*q)); t.height=Math.max(1,Math.round(im.height*q));
+      const tx=t.getContext('2d'); tx.fillStyle='#fff'; tx.fillRect(0,0,t.width,t.height); tx.drawImage(im,0,0,t.width,t.height); const d=tx.getImageData(0,0,t.width,t.height).data;
+      let x0=t.width,y0=t.height,x1=-1,y1=-1; for(let y=0;y<t.height;y++)for(let x=0;x<t.width;x++){ const i=(y*t.width+x)*4; if(d[i]<244||d[i+1]<244||d[i+2]<244){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+      if(x1>x0&&y1>y0){ const pad=Math.round(Math.max(t.width,t.height)*0.04); x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad); x1=Math.min(t.width-1,x1+pad); y1=Math.min(t.height-1,y1+pad);
+        if((x1-x0)*(y1-y0)<t.width*t.height*0.85){ sx=Math.round(x0/q); sy=Math.round(y0/q); sw=Math.round((x1-x0+1)/q); sh=Math.round((y1-y0+1)/q); } } }catch(e){}
+    const L=Math.max(sw,sh), k=L<1600?1600/L:(L>3000?3000/L:1);
+    const c=document.createElement('canvas'); c.width=Math.round(sw*k); c.height=Math.round(sh*k); const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); x.drawImage(im,sx,sy,sw,sh,0,0,c.width,c.height); res(c.toDataURL('image/png')); };
     im.onerror=()=>rej(new Error('bad image')); im.src=src; });
 }
+// a PDF page drawn sharply just for reading (the saved copy is smaller)
+async function _idoPdfSrc(file){
+  if(!window.pdfjsLib&&typeof _loadPdfJs==='function')await _loadPdfJs();
+  const pdf=await window.pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise, page=await pdf.getPage(1), b=page.getViewport({scale:1});
+  const vp=page.getViewport({scale:Math.min(6,4096/Math.max(b.width,b.height))}), c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+  const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height); await page.render({canvasContext:g,viewport:vp}).promise; return c.toDataURL('image/png');
+}
 const _idoTitle=s=>String(s||'').toLowerCase().replace(/\b([a-z])/g,c=>c.toUpperCase()).replace(/\s+/g,' ').trim();
-const _idoClean=s=>String(s||'').replace(/[^A-Za-z0-9 ,.\-\/#()'&:]/g,' ').replace(/\s+/g,' ').trim();
+const _idoClean=s=>String(s||'').replace(/¢/g,'c').replace(/[^A-Za-z0-9 ,.\-\/#()'&:]/g,' ').replace(/\s+/g,' ').trim();
 // a person's name on a card: 2–5 words of letters only
 const _idoIsName=s=>{ const t=String(s||'').trim(); if(!/^[A-Za-z][A-Za-z .']{2,60}$/.test(t))return false; const w=t.split(/\s+/).filter(x=>x.length>0); return w.length>=1&&w.length<=6&&!/(government|india|income|tax|department|permanent|account|number|card|name|father|birth|date|male|female|address|unique|identification|authority|signature|govt|dob|year|issue|enrol)/i.test(t); };
+// second read: just the English address block under the word "Address:" (Hindi and English side by side confuse a whole-card read)
+async function _idoAddrPass(w,img,words){
+  const aw=(words||[]).find(x=>/^address/i.test(x.t)); if(!aw)return '';
+  const im=new Image(); await new Promise((ok,bad)=>{ im.onload=ok; im.onerror=bad; im.src=img; });
+  const x0=Math.max(0,Math.round(aw.x0-aw.h*0.8)), y0=Math.max(0,Math.round(aw.y0-aw.h*0.6)), wd=Math.min(im.width-x0,Math.round(aw.h*22)), ht=Math.min(im.height-y0,Math.round(aw.h*9));   // just the address text, not the background beyond the card
+  if(wd<50||ht<30)return '';
+  const c=document.createElement('canvas'); c.width=wd; c.height=ht; const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,wd,ht); g.drawImage(im,x0,y0,wd,ht,0,0,wd,ht);
+  try{ let out=''; for(const m of ['6','4']){ await w.setParameters({tessedit_pageseg_mode:m}); const r=await w.recognize(c.toDataURL('image/png')); out=(r&&r.data&&r.data.text)||''; if(/\d{6}|[A-Za-z]{4,}.*[A-Za-z]{4,}/.test(out))break; } return out; }
+  catch(e){ return ''; } finally{ try{ await w.setParameters({tessedit_pageseg_mode:'3'}); }catch(e){} }
+}
 function _idoLineConf(d){ const m={}; ((d&&d.blocks)||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{ const k=String(l.text||'').trim(); if(k)m[k]=Math.max(m[k]||0,l.confidence||0); }))); return m; }
-function _idoWords(d){ const out=[]; ((d&&d.blocks)||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>(l.words||[]).forEach(w=>{ if(w.text&&w.bbox)out.push({t:w.text,x0:w.bbox.x0,y0:w.bbox.y0,h:Math.max(8,w.bbox.y1-w.bbox.y0)}); })))); return out; }
-function idParse(text,kind,words,lconf){
+function _idoWords(d){ const out=[]; let li=0; ((d&&d.blocks)||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{ li++; (l.words||[]).forEach(w=>{ if(w.text&&w.bbox)out.push({t:w.text,x0:w.bbox.x0,y0:w.bbox.y0,h:Math.max(8,w.bbox.y1-w.bbox.y0),li}); }); }))); return out; }
+function idParse(text,kind,words,lconf,addrText){
   const T=String(text||'').replace(/\r/g,''), L=T.split('\n').map(l=>l.trim()).filter(Boolean), out={};
   const cf=l=>{ if(!lconf)return 100; const k=String(l).trim(); return lconf[k]!=null?lconf[k]:0; };
   // a name is taken only from a line the reader is sure of (Hindi read as English letters scores low) with a proper-length word
@@ -1053,21 +1082,25 @@ function idParse(text,kind,words,lconf){
     if(!out.name&&di<0){ const g=L.filter(l=>goodName(l)&&cf(l)>=85); if(g.length===1)out.name=_idoTitle(_idoClean(g[0])); }
     // father / husband and address from the back: "Address: S/O Rajesh Vatsa, House No 1182, …, Haryana - 122003"
     const ai=L.findIndex(l=>/address/i.test(l));
-    if(words&&words.length){
+    if(addrText){ const al=String(addrText).split('\n').map(x=>x.trim()).filter(Boolean); if(al.length&&!/address/i.test(al[0]))al[0]='Address: '+al[0]; L.splice(ai>=0?ai:L.length,ai>=0?L.length-ai:0,...al); }
+    else if(words&&words.length){
       const aw=words.find(w=>/^address/i.test(w.t));
-      if(aw){ const col=words.filter(w=>w.x0>=aw.x0-8&&w.y0>=aw.y0-4).sort((a,b)=>a.y0-b.y0||a.x0-b.x0);
-        const lines=[]; col.forEach(w=>{ const ln=lines.find(l=>Math.abs(l.y-w.y0)<(w.h*0.6)); if(ln){ ln.w.push(w); } else lines.push({y:w.y0,w:[w]}); });
+      if(aw){ // the reader's own lines (a tilted card keeps its lines); keep only the words in the English column
+        const col=words.filter(w=>w.x0>=aw.x0-aw.h*0.8&&(w.li!=null?w.li>=aw.li:w.y0>=aw.y0-aw.h*0.7));
+        const byL={}; col.forEach(w=>{ const k=w.li!=null?w.li:Math.round(w.y0/(w.h||10)); (byL[k]||(byL[k]={y:w.y0,w:[]})).w.push(w); });
+        const lines=Object.keys(byL).map(Number).sort((a,b)=>a-b).map(k=>byL[k]);
         const txt=[]; for(const ln of lines){ const s=ln.w.sort((a,b)=>a.x0-b.x0).map(w=>w.t).join(' '); txt.push(s); if(/\b\d{6}\b/.test(s))break; if(txt.length>7)break; }
         L.splice(ai>=0?ai:L.length,ai>=0?L.length-ai:0,...txt);           // use the English column only
       }
     }
-    if(ai>=0||(words&&words.some(w=>/^address/i.test(w.t)))){ const ai2=L.findIndex(l=>/address/i.test(l)); 
+    if(ai>=0||addrText||(words&&words.some(w=>/^address/i.test(w.t)))){ const ai2=L.findIndex(l=>/address/i.test(l)); 
       let buf=[]; for(let j=ai2;j<Math.min(L.length,ai2+8);j++){ const raw=L[j]; const en=raw.slice(Math.max(0,raw.search(/address|[SDWC]\s?\/\s?O\b|[A-Za-z]{3,}/i))); buf.push(en); if(/\b\d{6}\b/.test(raw))break; }
-      let a=_idoClean(buf.join(', ')).replace(/^.*?address\s*:?\s*/i,'');
-      const rm=a.match(/\b([SDWC])\s?\/\s?O\s*:?\s*([A-Za-z .]+?)\s*,/i);
-      if(rm){ const r=rm[1].toUpperCase(), fn=_idoClean(rm[2]); if(r!=='C'&&_idoIsName(fn)&&fn.split(/\s+/).some(w=>w.length>=4)){ out.relation=r+'/o'; out.father=_idoTitle(fn); } a=a.slice(a.indexOf(rm[0])+rm[0].length); }
+      let a=_idoClean(buf.join(' ')).replace(/^.*?address\s*:?\s*/i,'');
+      const rm=a.match(/\b([SDWC])\s?\/\s?O\s*[:.]?\s*((?:late\.?\s+)?[A-Za-z .]+?)\s*(?:,|\.(?=\s*\S*\d))/i);
+      if(rm){ const r=rm[1].toUpperCase(), fn=_idoClean(rm[2]); const fn2=fn.replace(/^late\.?\s+/i,''); if(r!=='C'&&_idoIsName(fn2)&&fn2.split(/\s+/).some(w=>w.length>=4)){ out.relation=r+'/o'; out.father=_idoTitle(fn2); if(/^late\b/i.test(fn))out.fatherLate=true; } a=a.slice(a.indexOf(rm[0])+rm[0].length); }
       a=a.replace(/\s*,\s*/g,', ').replace(/(,\s*)+/g,', ').replace(/^[,\s]+|[,\s]+$/g,'');
       const pin=a.match(/\b(\d{6})\b/); if(pin)a=a.slice(0,a.indexOf(pin[1])+6);
+      a=a.replace(/\bS\.\s?[0O]\b\.?/g,'S.O.').replace(/\bPhase[- ]?[lI1|]\b/gi,'Phase-I').replace(/\bPhase[- ]?(ll|II)\b/gi,'Phase-II').replace(/\s+,/g,',');
       if(a.length>8)out.address=a.replace(/\b([A-Za-z])([A-Za-z]*)\b/g,(w,f,r)=>w.length<=3&&/^[A-Z]+$/.test(w)?w:f.toUpperCase()+r.toLowerCase());
     }
   }
@@ -1083,11 +1116,12 @@ async function idFillFromPic(srcs,kind){
   const nm={aadhaar_f:'Aadhaar (front)',aadhaar_b:'Aadhaar (back)',pan:'PAN card'}[kind]||'card';
   say('🔍 Reading the '+nm+'…'+(window.Tesseract?'':' (first time takes a little longer)'),'var(--muted)');
   let r;
-  try{ let img=null; for(const s0 of srcs){ try{ img=await _idoPrep(s0); break; }catch(e){} } if(!img)throw new Error('no picture'); const w=await _idoWorker(); const x=await w.recognize(img,{},{text:true,blocks:true}); r=idParse(x&&x.data&&x.data.text||'',kind,_idoWords(x&&x.data),_idoLineConf(x&&x.data));  }
+  try{ let img=null; for(let s0 of srcs){ try{ if(typeof File!=='undefined'&&s0 instanceof File)s0=await _idoPdfSrc(s0); img=await _idoPrep(s0); break; }catch(e){} } if(!img)throw new Error('no picture'); const w=await _idoWorker(); const x=await w.recognize(img,{},{text:true,blocks:true}); const wd=_idoWords(x&&x.data); const at=kind!=='pan'?await _idoAddrPass(w,img,wd):''; r=idParse(x&&x.data&&x.data.text||'',kind,wd,_idoLineConf(x&&x.data),at);  }
   catch(e){ say('Could not read the '+nm+' here — fill the boxes yourself.','var(--muted)'); return; }
   const got=[], mark=el=>{ el.classList.add('ocr-fill'); el.addEventListener('input',()=>el.classList.remove('ocr-fill'),{once:true}); };
   const fill=(id,v,label)=>{ const el=$i(id); if(!el||!v)return; if(String(el.value||'').trim())return; el.value=v; mark(el); got.push(label); };
   fill('pName',r.name,'name'); fill('pFather',r.father,(r.relation||'S/o')==='W/o'?'husband’s name':'father’s name');
+  if(r.fatherLate&&got.some(g=>/father|husband/.test(g))){ const fp=$i('pFatherPrefix'); if(fp&&!fp.value&&[...fp.options].some(o=>o.value==='Late')){ fp.value='Late'; mark(fp); } }
   if(r.father&&r.relation&&got.some(g=>/father|husband/.test(g))){ const rel=$i('pRelation'); if(rel&&[...rel.options].some(o=>o.value===r.relation)){ rel.value=r.relation; mark(rel); } }
   fill('pAddr',r.address,'address'); fill('pAadhaar',r.aadhaar,'Aadhaar no.'); fill('pPan',r.pan,'PAN');
   // a different number already typed? say so
@@ -1347,8 +1381,8 @@ async function _idUpload(inp){
         } else (_idDraft[tg.key]||(_idDraft[tg.key]=[])).push(meta);
         done++;
         if(['aadhaar_f','aadhaar_b','pan'].includes(tg.key)&&document.getElementById('pName')){   // read the card into the form
-          const orig=(file.type||'').startsWith('image/')?URL.createObjectURL(file):null;
-          idFillFromPic([orig,pic.data],tg.key).finally(()=>{ if(orig)setTimeout(()=>URL.revokeObjectURL(orig),60000); });
+          const isPdfF=file.type==='application/pdf'||/\.pdf$/i.test(file.name), orig=(file.type||'').startsWith('image/')?URL.createObjectURL(file):null;
+          idFillFromPic([isPdfF?file:orig,pic.data],tg.key).finally(()=>{ if(orig)setTimeout(()=>URL.revokeObjectURL(orig),60000); });
         }
       }
     }catch(e){ console.error(e); toast('❌ '+(e.message||('Could not upload '+file.name)),6000); }
