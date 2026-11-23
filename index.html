@@ -3732,7 +3732,7 @@ function _idPagesHTML(L,isLL){
   // a single card prints two to a row; a picture that isn't card-shaped (front + back on one page, a full A4 scan) gets the whole width
   const isFull=x=>x.r!=null&&(x.r<1.2||x.r>2.3), wt=x=>isFull(x)?3:1;
   const cell=x=>`<div class="deed-id-cell"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:100%;height:260px;object-fit:contain;display:block;border:1px solid #ddd;margin-top:4px;"/></div>`;
-  const fullCell=x=>`<div class="deed-id-cell" style="width:100%;padding-right:0;"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:auto;max-width:100%;height:auto;max-height:560px;object-fit:contain;display:block;margin:4px auto 0;border:1px solid #ddd;"/></div>`;
+  const fullCell=x=>`<div class="deed-id-cell" style="width:100%;padding-right:0;"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:auto;max-width:100%;height:auto;max-height:470px;object-fit:contain;display:block;margin:4px auto 0;border:1px solid #ddd;"/></div>`;
   const grid=pics=>{ let h='', pair=[]; const flush=()=>{ if(pair.length)h+='<div class="deed-id-grid">'+pair.map(cell).join('')+'</div>'; pair=[]; };
     pics.forEach(x=>{ if(isFull(x)){ flush(); h+='<div class="deed-id-grid">'+fullCell(x)+'</div>'; } else { pair.push(x); if(pair.length===2)flush(); } }); flush(); return h; };
   // pack people onto pages: at most 4 pictures a page; a person with more pictures continues on the next page
@@ -3744,9 +3744,9 @@ function _idPagesHTML(L,isLL){
     const pages=[]; let cur=[], n=0;
     blocks.forEach(b=>{ if(n+b.w>PER_PAGE&&cur.length){ pages.push(cur); cur=[]; n=0; } cur.push(b); n+=b.w; });
     if(cur.length)pages.push(cur);
+    // the page heading sits inside the first person's block, so it can never be left alone on a page
     pages.forEach((pg,k)=>parts.push(`<div class="deed-pg" style="padding-top:20px;">
-      <h4>${role} — ID Proofs${pages.length>1?' ('+(k+1)+' of '+pages.length+')':''}</h4>
-      ${pg.map(b=>`<div style="margin-bottom:20px;page-break-inside:avoid;"><p style="font-weight:700;margin-bottom:6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:4px;">${role}: ${_h(_pDisp(b.p)||'_______')}${b.cont?' (continued)':''}</p>${grid(b.pics)}</div>`).join('')}
+      ${pg.map((b,bi)=>`<div style="margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;">${bi===0?`<h4>${role} — ID Proofs${pages.length>1?' ('+(k+1)+' of '+pages.length+')':''}</h4>`:''}<p style="font-weight:700;margin-bottom:6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:4px;">${role}: ${_h(_pDisp(b.p)||'_______')}${b.cont?' (continued)':''}</p>${grid(b.pics)}</div>`).join('')}
     </div>`));
   };
   section(landlords,_r.l,true);
