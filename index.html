@@ -3743,26 +3743,30 @@ function _inventoryHTML(L){
 }
 
 function _idPagesHTML(L,isLL){
-  const parts=[], _r=_tplRoles(L.template), PER_PAGE=4;
+  const parts=[], _r=_tplRoles(L.template);
   const {landlords,tenants}=_leaseParties(L);
-  // a single card prints two to a row; a picture that isn't card-shaped (front + back on one page, a full A4 scan) gets the whole width
-  const isFull=x=>x.r!=null&&(x.r<1.2||x.r>2.3), wt=x=>isFull(x)?3:1;
-  const cell=x=>`<div class="deed-id-cell"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:100%;height:260px;object-fit:contain;display:block;border:1px solid #ddd;margin-top:4px;"/></div>`;
-  const fullCell=x=>`<div class="deed-id-cell" style="width:100%;padding-right:0;"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:auto;max-width:100%;height:auto;max-height:470px;object-fit:contain;display:block;margin:4px auto 0;border:1px solid #ddd;"/></div>`;
-  const grid=pics=>{ let h='', pair=[]; const flush=()=>{ if(pair.length)h+='<div class="deed-id-grid">'+pair.map(cell).join('')+'</div>'; pair=[]; };
-    pics.forEach(x=>{ if(isFull(x)){ flush(); h+='<div class="deed-id-grid">'+fullCell(x)+'</div>'; } else { pair.push(x); if(pair.length===2)flush(); } }); flush(); return h; };
-  // pack people onto pages: at most 4 pictures a page; a person with more pictures continues on the next page
+  // Pictures print two to a row. A row with an upright picture (a phone photo, or front + back stacked on one scan) gets a
+  // taller box; a very wide picture (front + back side by side) gets the whole width. Rows are then fitted onto pages by
+  // their real height — the budget leaves room for US Letter paper too (phones often print on Letter).
+  const BUDGET=880, HEAD=59, NAME=36, GAP=20, CARD_H=260, TALL_H=330, WIDE_H=300, ROW_X=44;
+  const isWide=x=>x.r!=null&&x.r>2.3, isTall=x=>x.r!=null&&x.r<1.2;
+  const rowsOf=pics=>{ const rows=[]; let pair=[]; const flush=()=>{ if(pair.length){ const h=pair.some(isTall)?TALL_H:CARD_H; rows.push({items:pair,h,wide:false}); } pair=[]; };
+    pics.forEach(x=>{ if(isWide(x)){ flush(); rows.push({items:[x],h:WIDE_H,wide:true}); } else { pair.push(x); if(pair.length===2)flush(); } }); flush(); return rows; };
+  const cell=(x,h)=>`<div class="deed-id-cell"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:100%;height:${h}px;object-fit:contain;display:block;border:1px solid #ddd;margin-top:4px;"/></div>`;
+  const wideCell=x=>`<div class="deed-id-cell" style="width:100%;padding-right:0;"><strong style="font-size:11px;">${_h(x.label)}</strong><img src="${x.src}" style="width:auto;max-width:100%;height:auto;max-height:${WIDE_H}px;object-fit:contain;display:block;margin:4px auto 0;border:1px solid #ddd;"/></div>`;
+  const grid=rows=>rows.map(r=>'<div class="deed-id-grid">'+(r.wide?wideCell(r.items[0]):r.items.map(x=>cell(x,r.h)).join(''))+'</div>').join('');
   const section=(people,role,isL)=>{
-    const blocks=[];
-    people.forEach(p=>{ const pics=_leasePrintPics(L,p,isL); let cur=[], n=0, first=true;
-      pics.forEach(x=>{ if(n+wt(x)>PER_PAGE&&cur.length){ blocks.push({p,pics:cur,w:n,cont:!first}); first=false; cur=[]; n=0; } cur.push(x); n+=wt(x); });
-      if(cur.length)blocks.push({p,pics:cur,w:n,cont:!first}); });
-    const pages=[]; let cur=[], n=0;
-    blocks.forEach(b=>{ if(n+b.w>PER_PAGE&&cur.length){ pages.push(cur); cur=[]; n=0; } cur.push(b); n+=b.w; });
-    if(cur.length)pages.push(cur);
+    const pages=[]; let cur=[], used=HEAD;
+    const newPage=()=>{ if(cur.length)pages.push(cur); cur=[]; used=HEAD; };
+    people.forEach(p=>{ const rows=rowsOf(_leasePrintPics(L,p,isL)); if(!rows.length)return; let blk=null, first=true;
+      rows.forEach(r=>{ const rh=r.h+ROW_X;
+        if(!blk){ if(cur.length&&used+NAME+rh+GAP>BUDGET)newPage(); blk={p,rows:[],cont:!first}; cur.push(blk); used+=NAME+GAP; first=false; }
+        else if(used+rh>BUDGET){ newPage(); blk={p,rows:[],cont:true}; cur.push(blk); used+=NAME+GAP; }
+        blk.rows.push(r); used+=rh; }); });
+    newPage();
     // the page heading sits inside the first person's block, so it can never be left alone on a page
     pages.forEach((pg,k)=>parts.push(`<div class="deed-pg" style="padding-top:20px;">
-      ${pg.map((b,bi)=>`<div style="margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;">${bi===0?`<h4>${role} — ID Proofs${pages.length>1?' ('+(k+1)+' of '+pages.length+')':''}</h4>`:''}<p style="font-weight:700;margin-bottom:6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:4px;">${role}: ${_h(_pDisp(b.p)||'_______')}${b.cont?' (continued)':''}</p>${grid(b.pics)}</div>`).join('')}
+      ${pg.map((b,bi)=>`<div style="margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;">${bi===0?`<h4>${role} — ID Proofs${pages.length>1?' ('+(k+1)+' of '+pages.length+')':''}</h4>`:''}<p style="font-weight:700;margin-bottom:6px;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:4px;">${role}: ${_h(_pDisp(b.p)||'_______')}${b.cont?' (continued)':''}</p>${grid(b.rows)}</div>`).join('')}
     </div>`));
   };
   section(landlords,_r.l,true);
